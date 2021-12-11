@@ -1,0 +1,1 @@
+This app use for buy virtual number and receive sms from the server
