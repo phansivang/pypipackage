@@ -6,176 +6,144 @@ import requests
 from bs4 import BeautifulSoup
 import subprocess
 
-with open('API_Key.txt', 'r') as API_key:
-    get_api = API_key.readline()
+# Load API key from file
+def load_api_key(filename='API_Key.txt'):
+    with open(filename, 'r') as file:
+        return file.readline().strip()
 
+API_KEY = load_api_key()
 
+# Get balance and convert to USD
 def get_balance():
     c = CurrencyRates()
-    request_balance = requests.get(
-        f'http://api.sms-man.com/stubs/handler_api.php?action=getBalance&api_key={get_api}')
-    x = request_balance.text.split(':')[1]
-    Currency = c.convert('RUB', 'USD', float(x))
-    mybalance = {request_balance.text: Currency}
-    result.insert(1.0, "$ " + str(mybalance.get(request_balance.text)) + '\n')
+    response = requests.get(f'http://api.sms-man.com/stubs/handler_api.php?action=getBalance&api_key={API_KEY}')
+    rub_balance = float(response.text.split(':')[1])
+    usd_balance = c.convert('RUB', 'USD', rub_balance)
+    result.insert(1.0, f"$ {usd_balance}\n")
 
-
-# noinspection PyGlobalUndefined
+# Get a new number
 def get_number():
-    global request_number
     try:
-        with open('Numbers.txt', 'r') as warning:
-            x = warning.readlines()
-        if len(x) > 0:
-            msbox = messagebox.askokcancel('WARNING', 'You will lose the previous number if you buy the new one !', )
-            if msbox == 1:
-                request_number = requests.get(
-                    f'http://api.sms-man.com/stubs/handler_api.php?action=getNumber&api_key={get_api}&service={clicked.get()}&country=0&ref=$ref')
-                get_id = request_number.text.split(':')
-                result.insert(1.0, '+' + get_id[2] + '\n')
-                with open('Numbers.txt', 'w') as save_id:
-                    save_id.write(get_id[1] + '\n')
-                    save_id.write(get_id[2])
-                    save_id.close()
-                with open('LOGS.txt', 'a') as LOG:
-                    LOG.write(request_number.text + '\n')
-                    LOG.close()
-            else:
-                pass
-        else:
-            request_number = requests.get(
-                f'http://api.sms-man.com/stubs/handler_api.php?action=getNumber&api_key={get_api}&service={clicked.get()}&country=0&ref=$ref')
-            get_id = request_number.text.split(':')
-            result.insert(1.0, '+' + get_id[2] + '\n')
-            with open('Numbers.txt', 'w') as save_id:
-                save_id.write(get_id[1] + '\n')
-                save_id.write(get_id[2])
-                save_id.close()
-            with open('LOGS.txt', 'a') as LOG:
-                LOG.write(request_number.text + '\n')
-                LOG.close()
+        with open('Numbers.txt', 'r') as file:
+            existing_numbers = file.readlines()
+
+        if existing_numbers and messagebox.askokcancel('WARNING', 'You will lose the previous number if you buy a new one!'):
+            save_new_number()
+        elif not existing_numbers:
+            save_new_number()
     except IndexError:
         pass
 
+# Save a new number to file
+def save_new_number():
+    response = requests.get(
+        f'http://api.sms-man.com/stubs/handler_api.php?action=getNumber&api_key={API_KEY}&service={clicked.get()}&country=0&ref=$ref')
+    parts = response.text.split(':')
+    number_id, number = parts[1], parts[2]
+    result.insert(1.0, f'+{number}\n')
+    with open('Numbers.txt', 'w') as file:
+        file.write(f'{number_id}\n{number}')
+    with open('LOGS.txt', 'a') as log_file:
+        log_file.write(response.text + '\n')
 
+# Get SMS code for the current number
 def get_sms():
     try:
-        with open('Numbers.txt', 'r') as get_code:
-            x = get_code.readlines()
-        request_sms = requests.get(
-            f'http://api.sms-man.com/stubs/handler_api.php?action=getStatus&api_key={get_api}&id={x[0]}')
-        if request_sms.text == 'STATUS_WAIT_CODE':
-            result.insert(1.0, "WAIT FOR CODE " + '\n')
+        with open('Numbers.txt', 'r') as file:
+            number_id = file.readline().strip()
 
-        elif request_sms.text == 'NO_ACTIVATION':
-            result.insert(1.0, request_sms.text + '\n')
+        response = requests.get(
+            f'http://api.sms-man.com/stubs/handler_api.php?action=getStatus&api_key={API_KEY}&id={number_id}')
+        status = response.text
 
-        elif request_sms.text == 'ACCESS_CANCEL':
-            with open('Numbers.txt', 'w') as clear:
-                result.insert(1.0, 'CODE SENT' + '\n')
-                return clear.write('')
+        if status == 'STATUS_WAIT_CODE':
+            result.insert(1.0, "WAIT FOR CODE\n")
+        elif status in ['NO_ACTIVATION', 'ACCESS_CANCEL']:
+            result.insert(1.0, f"{status}\n")
+            clear_numbers_file()
         else:
-            x_code = request_sms.text.split(':')
-            code = {request_sms.text: f'CODE:{x_code[1]}'}
-            result.insert(1.0, code.get(request_sms.text) + '\n')
-            with open('LOGS.txt', 'r') as read:
-                if request_number.text in read.readlines():
-                    with open('LOGS.txt', 'a') as write:
-                        write.write(":"'OK' + '\n')
-                        write.close()
-            with open('Numbers.txt', 'w') as clear:
-                return clear.write('')
-
-
-
+            code = status.split(':')[1]
+            result.insert(1.0, f"CODE: {code}\n")
+            update_logs(response.text)
+            clear_numbers_file()
     except IndexError:
-        result.insert(1.0, 'NO NUMBER IN  LISTS' + '\n')
-        with open('Numbers.txt', 'w') as clear:
-            return clear.write('')
+        result.insert(1.0, 'NO NUMBER IN LIST\n')
+        clear_numbers_file()
 
+# Clear the numbers file
+def clear_numbers_file():
+    with open('Numbers.txt', 'w') as file:
+        file.write('')
 
+# Update logs with status
+def update_logs(status):
+    with open('LOGS.txt', 'r') as log_file:
+        if status in log_file.readlines():
+            with open('LOGS.txt', 'a') as log_file_append:
+                log_file_append.write(":OK\n")
+
+# Delete the current number
 def delete_number():
     try:
-        with open('Numbers.txt', 'r') as delete_number:
-            x = delete_number.readlines()
-        deleted_number = requests.get(
-            f'http://api.sms-man.com/stubs/handler_api.php?action=setStatus&api_key={get_api}&id={x[0]}&status=-1')
-        result.insert(1.0, 'NUMBER DELETED' + '\n')
-        with open('Numbers.txt', 'w') as clear:
-            return clear.write('')
+        with open('Numbers.txt', 'r') as file:
+            number_id = file.readline().strip()
+
+        requests.get(
+            f'http://api.sms-man.com/stubs/handler_api.php?action=setStatus&api_key={API_KEY}&id={number_id}&status=-1')
+        result.insert(1.0, 'NUMBER DELETED\n')
+        clear_numbers_file()
     except IndexError:
-        result.insert(1.0, 'NO NUMBER IN LISTS' + '\n')
+        result.insert(1.0, 'NO NUMBER IN LIST\n')
 
-
+# Run get_sms in a separate thread
 def thread_for_code():
-    thread = threading.Thread(target=get_sms)
-    thread.start()
+    threading.Thread(target=get_sms).start()
 
-
-def clear():
+# Clear the result text box
+def clear_result():
     result.delete(1.0, END)
 
-
-def tk():
-    global result
-    global Balane_result
-    global clicked
+# Initialize and run the Tkinter application
+def start_tk_app():
+    global result, clicked
     root = Tk()
-    # root.iconbitmap('sms.ico')
     root.title('ICODE')
     root.resizable(False, False)
     root.config(bg='black')
     root.geometry('300x600')
-    text = Label(root, text='ICODE', font=('', '50'), fg='white', bg='black')
-    text.pack(pady=20)
-    b_buy = Button(root, text='BUY NUMBER', width=20, fg='white', bg='black', command=get_number)
-    b_buy.pack(pady=5)
-    b_delete = Button(root, text='DELETE NUMBER', fg='white', bg='black', width=20, command=delete_number)
-    b_delete.pack(pady=5)
-    b_get_code = Button(root, text='GET CODE', fg='white', bg='black', width=20, command=thread_for_code)
-    b_get_code.pack(pady=5)
-    b_check_balance = Button(root, text='CHECK BALANCE', fg='white', bg='black', width=20, command=get_balance)
-    b_check_balance.pack(pady=5)
+
+    Label(root, text='ICODE', font=('', '50'), fg='white', bg='black').pack(pady=20)
+    Button(root, text='BUY NUMBER', width=20, fg='white', bg='black', command=get_number).pack(pady=5)
+    Button(root, text='DELETE NUMBER', width=20, fg='white', bg='black', command=delete_number).pack(pady=5)
+    Button(root, text='GET CODE', width=20, fg='white', bg='black', command=thread_for_code).pack(pady=5)
+    Button(root, text='CHECK BALANCE', width=20, fg='white', bg='black', command=get_balance).pack(pady=5)
+    
     result = Text(root, width=35, height=10, font=('', '10'), fg='white', bg='black')
     result.pack(pady=10)
-    Balane_result = Label(root, fg='white', bg='black')
-    Balane_result.pack()
-    clear_sc = Button(root, text='CLEAR', fg='white', bg='black', command=clear)
-    clear_sc.pack()
+    Button(root, text='CLEAR', fg='white', bg='black', command=clear_result).pack()
+    
     clicked = StringVar()
-    service = {
-        "TELEGRAM": 'tg',
-        "FACEBOOK": "fb",
-        "YOUTUBE": "go",
-        "MICROSOFT": "mm",
-    }
-    dropmenu = OptionMenu(root, clicked, service.get('TELEGRAM'), service.get('FACEBOOK'), service.get('MICROSOFT'),
-                          service.get('YOUTUBE'))
-    dropmenu.pack(pady=10)
-    dropmenu.config(bg="black", fg="WHITE")
+    service_options = {"TELEGRAM": 'tg', "FACEBOOK": "fb", "YOUTUBE": "go", "MICROSOFT": "mm"}
+    OptionMenu(root, clicked, *service_options.values()).pack(pady=10).config(bg="black", fg="WHITE")
 
     root.mainloop()
 
-
+# Authenticate user and start the Tkinter app
 def login():
-    get = requests.get('https://anotepad.com/note/read/3shqntdy').text
-    soup = BeautifulSoup(get, 'lxml')
-    x = soup.find('div', class_='plaintext').text
-    user = []
-    user.append(x)
-    for i in user:
-        try:
-            ii = i.split('\n')
-            xx = ii.index(subprocess.check_output('wmic csproduct get uuid').decode().split('\n')[1].strip())
-            if xx >= 0:
-                tk()
+    response = requests.get('https://anotepad.com/note/read/3shqntdy').text
+    soup = BeautifulSoup(response, 'lxml')
+    plaintext = soup.find('div', class_='plaintext').text
 
-        except:
-            with open('Key_Activation.txt', 'w') as key_activation:
-                key_activation.write(subprocess.check_output('wmic csproduct get uuid').decode().split('\n')[1].strip())
-                key_activation.close()
+    uuid = subprocess.check_output('wmic csproduct get uuid').decode().split('\n')[1].strip()
+    if uuid in plaintext.split('\n'):
+        start_tk_app()
+    else:
+        with open('Key_Activation.txt', 'w') as file:
+            file.write(uuid)
 
-
-def myapp():
+# Start the application
+def main():
     login()
-    
+
+if __name__ == "__main__":
+    main()
